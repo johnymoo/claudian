@@ -125,7 +125,8 @@ export default class ClaudianPlugin extends Plugin {
   }
 
   onunload() {
-    this.agentService.cleanup();
+    // Fire-and-forget since onunload is synchronous
+    void this.agentService.cleanup();
   }
 
   /** Opens the Claudian sidebar view, creating it if necessary. */
@@ -241,19 +242,133 @@ export default class ClaudianPlugin extends Plugin {
     await this.storage.saveClaudianSettings(settingsToSave);
   }
 
-  /** Updates and persists environment variables, notifying if restart is needed. */
+  /**
+   * Updates and persists environment variables with hot-reload support.
+   * Critical env vars (API key, base URL, auth token) trigger automatic
+   * restart of the persistent query - no plugin restart required.
+   */
   async applyEnvironmentVariables(envText: string): Promise<void> {
-    this.settings.environmentVariables = envText;
+    const oldEnvText = this.runtimeEnvironmentVariables;
+
+    // Resolve auth conflict: Claude Code only accepts one auth method
+    const resolvedEnvText = this.resolveAuthConflict(oldEnvText, envText);
+
+    this.settings.environmentVariables = resolvedEnvText;
     await this.saveSettings();
 
-    if (envText !== this.runtimeEnvironmentVariables) {
+    if (resolvedEnvText === oldEnvText) {
+      this.hasNotifiedEnvChange = false;
+      return;
+    }
+
+    // Check if critical env vars changed (requires persistent query restart)
+    const criticalChanged = this.hasCriticalEnvVarsChanged(oldEnvText, resolvedEnvText);
+
+    if (criticalChanged) {
+      // Hot-reload: update runtime env vars and restart persistent query
+      this.runtimeEnvironmentVariables = resolvedEnvText;
+      this.hasNotifiedEnvChange = false;
+
+      // Reconcile model and invalidate sessions
+      const { changed, invalidatedConversations } = this.reconcileModelWithEnvironment(resolvedEnvText);
+
+      // Save any invalidated conversations
+      if (invalidatedConversations.length > 0) {
+        for (const conv of invalidatedConversations) {
+          await this.storage.sessions.saveConversation(conv);
+        }
+      }
+      if (changed) {
+        await this.saveSettings();
+      }
+
+      // Restart the persistent query with new env vars
+      if (this.agentService) {
+        await this.agentService.restartPersistentQuery('environment variables changed');
+        new Notice('Environment variables updated. Connection restarted.');
+      }
+    } else {
+      // Non-critical changes still require plugin restart
       if (!this.hasNotifiedEnvChange) {
         new Notice('Environment variables changed. Restart the plugin for changes to take effect.');
         this.hasNotifiedEnvChange = true;
       }
-    } else {
-      this.hasNotifiedEnvChange = false;
     }
+  }
+
+  /**
+   * Checks if critical environment variables have changed.
+   * Critical vars: API key, base URL, auth token - affect API connection.
+   */
+  private hasCriticalEnvVarsChanged(oldEnvText: string, newEnvText: string): boolean {
+    const criticalKeys = [
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_AUTH_TOKEN',
+    ];
+
+    const oldVars = parseEnvironmentVariables(oldEnvText || '');
+    const newVars = parseEnvironmentVariables(newEnvText || '');
+
+    for (const key of criticalKeys) {
+      if (oldVars[key] !== newVars[key]) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Resolves auth conflict: Claude Code only accepts one auth method.
+   * If both ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are set, remove the old one.
+   * The newly added/changed auth method takes precedence.
+   */
+  private resolveAuthConflict(oldEnvText: string, newEnvText: string): string {
+    const oldVars = parseEnvironmentVariables(oldEnvText || '');
+    const newVars = parseEnvironmentVariables(newEnvText || '');
+
+    const hasApiKey = !!newVars['ANTHROPIC_API_KEY'];
+    const hasAuthToken = !!newVars['ANTHROPIC_AUTH_TOKEN'];
+
+    // No conflict if only one or neither is set
+    if (!hasApiKey || !hasAuthToken) {
+      return newEnvText;
+    }
+
+    // Both are set - determine which one is newly added/changed
+    const apiKeyChanged = oldVars['ANTHROPIC_API_KEY'] !== newVars['ANTHROPIC_API_KEY'];
+    const authTokenChanged = oldVars['ANTHROPIC_AUTH_TOKEN'] !== newVars['ANTHROPIC_AUTH_TOKEN'];
+
+    let keyToRemove: string | null = null;
+
+    if (apiKeyChanged && !authTokenChanged) {
+      // API key was changed, remove auth token
+      keyToRemove = 'ANTHROPIC_AUTH_TOKEN';
+    } else if (authTokenChanged && !apiKeyChanged) {
+      // Auth token was changed, remove API key
+      keyToRemove = 'ANTHROPIC_API_KEY';
+    } else if (apiKeyChanged && authTokenChanged) {
+      // Both changed - prefer API key (more common), remove auth token
+      keyToRemove = 'ANTHROPIC_AUTH_TOKEN';
+    } else {
+      // Neither changed but both exist - this shouldn't happen in normal flow
+      // but if it does, keep API key
+      keyToRemove = 'ANTHROPIC_AUTH_TOKEN';
+    }
+
+    // Remove the conflicting key from the env text
+    const lines = newEnvText.split(/\r?\n/);
+    const filteredLines = lines.filter(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return true;
+      const eqIndex = trimmed.indexOf('=');
+      if (eqIndex <= 0) return true;
+      const key = trimmed.substring(0, eqIndex).trim();
+      return key !== keyToRemove;
+    });
+
+    new Notice(`Removed ${keyToRemove} (Claude Code only accepts one auth method)`);
+    return filteredLines.join('\n');
   }
 
   /** Returns the runtime environment variables (fixed at plugin load). */
@@ -326,8 +441,7 @@ export default class ClaudianPlugin extends Plugin {
 
     // Hash changed - model or provider may have changed.
     // Invalidate session so next query rebuilds full context from history.
-    // Note: agentService may not exist yet during initial plugin load.
-    this.agentService?.resetSession();
+    // Note: The caller (applyEnvironmentVariables) handles restarting the persistent query.
     clearDiffState(); // Clear UI diff state (not SDK-related)
 
     // Clear sessionId from all conversations since they belong to the old provider.
@@ -420,7 +534,7 @@ export default class ClaudianPlugin extends Plugin {
 
     this.conversations.unshift(conversation);
     this.activeConversationId = conversation.id;
-    this.agentService.resetSession();
+    await this.agentService.resetSession();
     clearDiffState(); // Clear UI diff state (not SDK-related)
 
     // Save new conversation to session file
@@ -436,7 +550,7 @@ export default class ClaudianPlugin extends Plugin {
     if (!conversation) return null;
 
     this.activeConversationId = id;
-    this.agentService.setSessionId(conversation.sessionId);
+    await this.agentService.setSessionId(conversation.sessionId);
     clearDiffState(); // Clear UI diff state when switching conversations
 
     await this.storage.setActiveConversationId(this.activeConversationId);

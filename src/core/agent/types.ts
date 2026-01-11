@@ -202,3 +202,40 @@ export function computeSystemPromptKey(settings: SystemPromptSettings): string {
   ];
   return parts.join('::');
 }
+
+/**
+ * Check if an error is a ProcessTransport error from the SDK.
+ * These errors occur when the Claude CLI process is not ready or has crashed.
+ */
+export function isProcessTransportError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes('processtransport') ||
+         message.includes('not ready for writing') ||
+         message.includes('process exited') ||
+         message.includes('epipe');
+}
+
+/**
+ * Translate SDK errors to user-friendly messages.
+ */
+export function translateErrorMessage(error: Error): string {
+  const message = error.message;
+
+  // ProcessTransport errors
+  if (message.includes('ProcessTransport is not ready for writing')) {
+    return 'Connection to Claude is not ready. Please try again.';
+  }
+  if (message.includes('process exited with code')) {
+    return 'Claude process exited unexpectedly. Please try again.';
+  }
+  if (message.includes('process terminated by signal')) {
+    return 'Claude process was terminated. Please try again.';
+  }
+  if (message.toLowerCase().includes('epipe')) {
+    return 'Connection to Claude was lost. Please try again.';
+  }
+
+  // Return original message for unrecognized errors
+  return message;
+}

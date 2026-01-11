@@ -59,34 +59,34 @@ describe('ClaudianService', () => {
       expect(service.getSessionId()).toBeNull();
     });
 
-    it('should set session ID', () => {
-      service.setSessionId('test-session-123');
+    it('should set session ID', async () => {
+      await service.setSessionId('test-session-123');
       expect(service.getSessionId()).toBe('test-session-123');
     });
 
-    it('should reset session', () => {
-      service.setSessionId('test-session-123');
-      service.resetSession();
+    it('should reset session', async () => {
+      await service.setSessionId('test-session-123');
+      await service.resetSession();
       expect(service.getSessionId()).toBeNull();
     });
 
-    it('should not close persistent query when setting same session ID', () => {
-      service.setSessionId('test-session-123');
+    it('should not close persistent query when setting same session ID', async () => {
+      await service.setSessionId('test-session-123');
       const closePersistentQuerySpy = jest.spyOn(service as any, 'closePersistentQuery');
-      service.setSessionId('test-session-123');
+      await service.setSessionId('test-session-123');
       expect(closePersistentQuerySpy).not.toHaveBeenCalled();
     });
 
-    it('should close persistent query when switching to different session', () => {
-      service.setSessionId('test-session-123');
+    it('should close persistent query when switching to different session', async () => {
+      await service.setSessionId('test-session-123');
       const closePersistentQuerySpy = jest.spyOn(service as any, 'closePersistentQuery');
-      service.setSessionId('different-session-456');
+      await service.setSessionId('different-session-456');
       expect(closePersistentQuerySpy).toHaveBeenCalledWith('session switch');
     });
 
-    it('should handle setting null session ID', () => {
-      service.setSessionId('test-session-123');
-      service.setSessionId(null);
+    it('should handle setting null session ID', async () => {
+      await service.setSessionId('test-session-123');
+      await service.setSessionId(null);
       expect(service.getSessionId()).toBeNull();
     });
   });
@@ -130,15 +130,15 @@ describe('ClaudianService', () => {
       expect(service.isPersistentQueryActive()).toBe(false);
     });
 
-    it('should close persistent query', () => {
-      service.setSessionId('test-session');
-      service.closePersistentQuery('test reason');
+    it('should close persistent query', async () => {
+      await service.setSessionId('test-session');
+      await service.closePersistentQuery('test reason');
 
       expect(service.isPersistentQueryActive()).toBe(false);
     });
 
     it('should restart persistent query', async () => {
-      service.setSessionId('test-session');
+      await service.setSessionId('test-session');
       
       const startPersistentQuerySpy = jest.spyOn(service as any, 'startPersistentQuery');
       startPersistentQuerySpy.mockResolvedValue(undefined);
@@ -148,11 +148,11 @@ describe('ClaudianService', () => {
       expect(startPersistentQuerySpy).toHaveBeenCalled();
     });
 
-    it('should cleanup resources', () => {
+    it('should cleanup resources', async () => {
       const closePersistentQuerySpy = jest.spyOn(service as any, 'closePersistentQuery');
       const cancelSpy = jest.spyOn(service, 'cancel');
 
-      service.cleanup();
+      await service.cleanup();
 
       expect(closePersistentQuerySpy).toHaveBeenCalledWith('plugin cleanup');
       expect(cancelSpy).toHaveBeenCalled();
@@ -223,19 +223,19 @@ describe('ClaudianService', () => {
   });
 
   describe('Session Restoration', () => {
-    it('should restore session with custom model', () => {
+    it('should restore session with custom model', async () => {
       const customModel = 'claude-3-opus';
       (mockPlugin as any).settings.model = customModel;
 
-      service.setSessionId('test-session-123');
+      await service.setSessionId('test-session-123');
 
       expect(service.getSessionId()).toBe('test-session-123');
     });
 
-    it('should invalidate session on reset', () => {
-      service.setSessionId('test-session-123');
+    it('should invalidate session on reset', async () => {
+      await service.setSessionId('test-session-123');
       const sessionManager = (service as any).sessionManager;
-      service.resetSession();
+      await service.resetSession();
 
       expect(sessionManager.getSessionId()).toBeNull();
       expect(service.getSessionId()).toBeNull();

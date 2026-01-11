@@ -60,10 +60,12 @@ import { SessionManager } from './SessionManager';
 import {
   type ClosePersistentQueryOptions,
   createResponseHandler,
+  isProcessTransportError,
   isTurnCompleteMessage,
   type PersistentQueryConfig,
   type ResponseHandler,
   type SDKContentBlock,
+  translateErrorMessage,
 } from './types';
 
 export type ApprovalCallback = (
@@ -239,8 +241,9 @@ export class ClaudianService {
 
   /**
    * Closes the persistent query and cleans up resources.
+   * Waits for the process to terminate to prevent EPIPE errors.
    */
-  closePersistentQuery(_reason?: string, options?: ClosePersistentQueryOptions): void {
+  async closePersistentQuery(_reason?: string, options?: ClosePersistentQueryOptions): Promise<void> {
     if (!this.persistentQuery) {
       return;
     }
@@ -252,13 +255,19 @@ export class ClaudianService {
     // Close the message channel (ends the async iterable)
     this.messageChannel?.close();
 
-    // Interrupt the query
-    void this.persistentQuery.interrupt().catch(() => {
+    // Interrupt the query and wait for it to complete
+    const queryToClose = this.persistentQuery;
+    try {
+      await queryToClose.interrupt();
+    } catch {
       // Silence abort/interrupt errors during shutdown
-    });
+    }
 
     // Abort as backup
     this.queryAbortController?.abort();
+
+    // Small delay to ensure the process is fully terminated
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     if (!preserveHandlers) {
       // Notify all handlers before clearing so generators don't hang forever.
@@ -292,7 +301,7 @@ export class ClaudianService {
    */
   async restartPersistentQuery(reason?: string, options?: ClosePersistentQueryOptions): Promise<void> {
     const sessionId = this.sessionManager.getSessionId();
-    this.closePersistentQuery(reason, options);
+    await this.closePersistentQuery(reason, options);
 
     const vaultPath = getVaultPath(this.plugin.app);
     const cliPath = this.plugin.getResolvedClaudeCliPath();
@@ -435,6 +444,12 @@ export class ClaudianService {
           const handler = this.responseHandlers[this.responseHandlers.length - 1];
           const errorInstance = error instanceof Error ? error : new Error(String(error));
           const messageToReplay = this.lastSentMessage;
+          const isTransportError = isProcessTransportError(error);
+
+          // Log ProcessTransport errors specifically for debugging
+          if (isTransportError) {
+            console.warn('[ClaudianService] ProcessTransport error detected, attempting recovery:', errorInstance.message);
+          }
 
           if (!this.crashRecoveryAttempted && messageToReplay && handler && !handler.sawAnyChunk) {
             this.crashRecoveryAttempted = true;
@@ -616,7 +631,7 @@ export class ClaudianService {
       : queryOptions;
 
     if (forceColdStart) {
-      this.closePersistentQuery('session invalidated');
+      await this.closePersistentQuery('session invalidated');
     }
 
     // Determine query path: persistent vs cold-start
@@ -820,7 +835,10 @@ export class ClaudianService {
 
       // Check if an error occurred (assigned in onError callback)
       if (state.error) {
-        yield { type: 'error', content: state.error.message };
+        // For ProcessTransport errors, the crash recovery in consumer loop should have
+        // already attempted a restart. If we still got an error, provide a friendly message.
+        const friendlyMessage = translateErrorMessage(state.error);
+        yield { type: 'error', content: friendlyMessage };
       }
 
       // Clear message tracking after completion
@@ -1149,9 +1167,9 @@ export class ClaudianService {
    * Reset the conversation session.
    * Closes the persistent query since session is changing.
    */
-  resetSession() {
+  async resetSession(): Promise<void> {
     // Close persistent query (new session will use cold-start resume)
-    this.closePersistentQuery('session reset');
+    await this.closePersistentQuery('session reset');
 
     this.sessionManager.reset();
     this.approvalManager.clearSessionPermissions();
@@ -1166,11 +1184,11 @@ export class ClaudianService {
    * Set the session ID (for restoring from saved conversation).
    * Closes the persistent query since session is switching.
    */
-  setSessionId(id: string | null): void {
+  async setSessionId(id: string | null): Promise<void> {
     // Close persistent query when switching sessions
     const currentId = this.sessionManager.getSessionId();
     if (currentId !== id) {
-      this.closePersistentQuery('session switch');
+      await this.closePersistentQuery('session switch');
     }
 
     this.sessionManager.setSessionId(id, this.plugin.settings.model);
@@ -1180,13 +1198,13 @@ export class ClaudianService {
    * Cleanup resources (Phase 5).
    * Called on plugin unload to close persistent query and abort any cold-start query.
    */
-  cleanup() {
+  async cleanup(): Promise<void> {
     // Close persistent query
-    this.closePersistentQuery('plugin cleanup');
+    await this.closePersistentQuery('plugin cleanup');
 
     // Cancel any in-flight cold-start query
     this.cancel();
-    this.resetSession();
+    await this.resetSession();
   }
 
   /** Sets the approval callback for UI prompts. */

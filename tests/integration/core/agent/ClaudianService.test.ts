@@ -790,7 +790,7 @@ describe('ClaudianService', () => {
       const handlersBefore = (service as any).responseHandlers?.length ?? 0;
 
       // Close with preserveHandlers: true
-      service.closePersistentQuery('test', { preserveHandlers: true });
+      await service.closePersistentQuery('test', { preserveHandlers: true });
 
       // Handlers should still exist
       const handlersAfter = (service as any).responseHandlers?.length ?? 0;
@@ -814,7 +814,7 @@ describe('ClaudianService', () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
 
       // Close without preserveHandlers (default is false)
-      service.closePersistentQuery('test');
+      await service.closePersistentQuery('test');
 
       // Handlers should be cleared
       const handlersAfter = (service as any).responseHandlers?.length ?? 0;
@@ -881,7 +881,7 @@ describe('ClaudianService', () => {
       expect((service as any).persistentQuery).not.toBeNull();
 
       // Close the persistent query (simulating session reset)
-      service.closePersistentQuery('test close');
+      await service.closePersistentQuery('test close');
       expect((service as any).persistentQuery).toBeNull();
       expect((service as any).shuttingDown).toBe(false); // Should be reset
 
@@ -905,7 +905,7 @@ describe('ClaudianService', () => {
       expect((service as any).persistentQuery).not.toBeNull();
 
       // Reset session (which closes persistent query)
-      service.resetSession();
+      await service.resetSession();
       expect((service as any).persistentQuery).toBeNull();
       expect((service as any).shuttingDown).toBe(false);
 
@@ -927,7 +927,7 @@ describe('ClaudianService', () => {
       expect((service as any).persistentQuery).not.toBeNull();
 
       // Switch to a different session (which closes persistent query)
-      service.setSessionId('new-session-id');
+      await service.setSessionId('new-session-id');
       expect((service as any).persistentQuery).toBeNull();
       expect((service as any).shuttingDown).toBe(false);
 
@@ -945,11 +945,11 @@ describe('ClaudianService', () => {
   // tests/unit/core/agent/SessionManager.test.ts
 
   describe('cleanup', () => {
-    it('should call cancel and resetSession', () => {
+    it('should call cancel and resetSession', async () => {
       const cancelSpy = jest.spyOn(service, 'cancel');
       const resetSessionSpy = jest.spyOn(service, 'resetSession');
 
-      service.cleanup();
+      await service.cleanup();
 
       expect(cancelSpy).toHaveBeenCalled();
       expect(resetSessionSpy).toHaveBeenCalled();
@@ -1099,7 +1099,7 @@ describe('ClaudianService', () => {
       (fs.existsSync as jest.Mock).mockReturnValue(true);
 
       // Simulate restoring a session ID from storage
-      service.setSessionId('restored-session-id');
+      await service.setSessionId('restored-session-id');
 
       setMockMessages([
         { type: 'assistant', message: { content: [{ type: 'text', text: 'Resumed!' }] } },
@@ -1669,7 +1669,7 @@ describe('ClaudianService', () => {
     it('should clear session-scoped approvals on resetSession', async () => {
       await (service as any).approvalManager.approveAction('Bash', { command: 'ls -la' }, 'session');
 
-      service.resetSession();
+      await service.resetSession();
 
       const isApproved = (service as any).approvalManager.isActionApproved('Bash', { command: 'ls -la' });
       expect(isApproved).toBe(false);
@@ -1839,7 +1839,7 @@ describe('ClaudianService', () => {
     });
 
     it('should rebuild history and retry without resume on session expiration', async () => {
-      service.setSessionId('stale-session');
+      await service.setSessionId('stale-session');
       const prompts: string[] = [];
 
       jest.spyOn(service as any, 'queryViaSDK').mockImplementation((async function* (prompt: string) {
