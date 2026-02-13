@@ -300,6 +300,61 @@ describe('ClaudianPlugin', () => {
       await plugin.applyEnvironmentVariables('A=1');
       expect((plugin as any).hasNotifiedEnvChange).toBe(false);
     });
+
+    it('should hot-reload when model-related env vars change', async () => {
+      await plugin.onload();
+      (plugin as any).runtimeEnvironmentVariables = 'ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-haiku-4-5';
+
+      const restartSpy = jest.spyOn(plugin.agentService, 'restartPersistentQuery');
+
+      await plugin.applyEnvironmentVariables('ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-opus-4-6');
+
+      // Should trigger hot-reload (restart persistent query)
+      expect(restartSpy).toHaveBeenCalledWith('environment variables changed');
+      // Should update runtime env vars
+      expect((plugin as any).runtimeEnvironmentVariables).toBe('ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-opus-4-6');
+      // Should NOT show restart notification (hot-reload handles it)
+      expect((plugin as any).hasNotifiedEnvChange).toBe(false);
+    });
+
+    it('should hot-reload when ANTHROPIC_MODEL changes', async () => {
+      await plugin.onload();
+      (plugin as any).runtimeEnvironmentVariables = 'ANTHROPIC_MODEL=model-a';
+
+      const restartSpy = jest.spyOn(plugin.agentService, 'restartPersistentQuery');
+
+      await plugin.applyEnvironmentVariables('ANTHROPIC_MODEL=model-b');
+
+      expect(restartSpy).toHaveBeenCalledWith('environment variables changed');
+      expect((plugin as any).runtimeEnvironmentVariables).toBe('ANTHROPIC_MODEL=model-b');
+      expect((plugin as any).hasNotifiedEnvChange).toBe(false);
+    });
+
+    it('should hot-reload when ANTHROPIC_DEFAULT_SONNET_MODEL changes', async () => {
+      await plugin.onload();
+      (plugin as any).runtimeEnvironmentVariables = 'ANTHROPIC_DEFAULT_SONNET_MODEL=sonnet-a';
+
+      const restartSpy = jest.spyOn(plugin.agentService, 'restartPersistentQuery');
+
+      await plugin.applyEnvironmentVariables('ANTHROPIC_DEFAULT_SONNET_MODEL=sonnet-b');
+
+      expect(restartSpy).toHaveBeenCalledWith('environment variables changed');
+      expect((plugin as any).runtimeEnvironmentVariables).toBe('ANTHROPIC_DEFAULT_SONNET_MODEL=sonnet-b');
+      expect((plugin as any).hasNotifiedEnvChange).toBe(false);
+    });
+
+    it('should hot-reload when ANTHROPIC_DEFAULT_OPUS_MODEL changes', async () => {
+      await plugin.onload();
+      (plugin as any).runtimeEnvironmentVariables = 'ANTHROPIC_DEFAULT_OPUS_MODEL=opus-a';
+
+      const restartSpy = jest.spyOn(plugin.agentService, 'restartPersistentQuery');
+
+      await plugin.applyEnvironmentVariables('ANTHROPIC_DEFAULT_OPUS_MODEL=opus-b');
+
+      expect(restartSpy).toHaveBeenCalledWith('environment variables changed');
+      expect((plugin as any).runtimeEnvironmentVariables).toBe('ANTHROPIC_DEFAULT_OPUS_MODEL=opus-b');
+      expect((plugin as any).hasNotifiedEnvChange).toBe(false);
+    });
   });
 
   describe('ribbon icon callback', () => {

@@ -298,13 +298,17 @@ export default class ClaudianPlugin extends Plugin {
 
   /**
    * Checks if critical environment variables have changed.
-   * Critical vars: API key, base URL, auth token - affect API connection.
+   * Critical vars: API key, base URL, auth token, model overrides - affect API connection and model selection.
    */
   private hasCriticalEnvVarsChanged(oldEnvText: string, newEnvText: string): boolean {
     const criticalKeys = [
       'ANTHROPIC_API_KEY',
       'ANTHROPIC_BASE_URL',
       'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
     ];
 
     const oldVars = parseEnvironmentVariables(oldEnvText || '');
